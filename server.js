@@ -128,7 +128,7 @@ app.post('/api/verify-news', async (req, res) => {
         'Authorization': `Bearer ${GROQ_KEY}`
       },
       body: JSON.stringify({
-        model: 'llama3-8b-8192',
+        model: 'llama-3.1-8b-instant',
         max_tokens: 500,
         temperature: 0.1,
         messages: [
