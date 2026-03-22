@@ -1,4 +1,4 @@
-// server.js - Rehoteq Fact-Check Secure Backend
+// server.js - Rehoteq Fact-Check Secure Backend v2.1
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
@@ -9,16 +9,16 @@ app.use(express.json());
 
 const GOOGLE_KEY = process.env.GOOGLE_KEY;
 const VT_KEY = process.env.VT_KEY;
-const CLAUDE_KEY = process.env.CLAUDE_KEY;
+const GROQ_KEY = process.env.GROQ_KEY;
 
 app.get('/', (req, res) => {
   console.log('Health check');
   res.json({ 
     status: 'RehoCheck API is running', 
-    version: '2.0',
+    version: '2.1',
     google_key_set: !!GOOGLE_KEY,
     vt_key_set: !!VT_KEY,
-    claude_key_set: !!CLAUDE_KEY
+    groq_key_set: !!GROQ_KEY
   });
 });
 
@@ -27,7 +27,7 @@ app.get('/api/test', (req, res) => {
     message: 'API working!',
     google_key: GOOGLE_KEY ? 'SET' : 'NOT SET',
     vt_key: VT_KEY ? 'SET' : 'NOT SET',
-    claude_key: CLAUDE_KEY ? 'SET' : 'NOT SET'
+    groq_key: GROQ_KEY ? 'SET' : 'NOT SET'
   });
 });
 
@@ -89,10 +89,8 @@ app.post('/api/virustotal', async (req, res) => {
         body: form
       });
       const submitData = await submitRes.json();
-      console.log('VT submit:', JSON.stringify(submitData));
       res.json(submitData);
     } else {
-      console.log('VT result stats:', JSON.stringify(data.data && data.data.attributes && data.data.attributes.last_analysis_stats));
       res.json(data);
     }
   } catch (err) {
@@ -115,62 +113,74 @@ app.get('/api/virustotal/analysis/:id', async (req, res) => {
   }
 });
 
-// NEWS VERIFICATION — Powered by Claude AI
+// NEWS VERIFICATION — Powered by Groq AI (Free)
 app.post('/api/verify-news', async (req, res) => {
   try {
     const { headline } = req.body;
     console.log('Verifying news headline:', headline);
     if (!headline) return res.status(400).json({ error: 'Headline required' });
-    if (!CLAUDE_KEY) return res.status(500).json({ error: 'Claude key not set' });
+    if (!GROQ_KEY) return res.status(500).json({ error: 'Groq key not set' });
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': CLAUDE_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${GROQ_KEY}`
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'llama3-8b-8192',
         max_tokens: 500,
-        messages: [{
-          role: 'user',
-          content: `You are a professional fact-checker and news analyst. Analyse this news headline or claim and determine if it is likely true, false, misleading or unverifiable.
+        temperature: 0.1,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a professional fact-checker and news analyst. Always respond in valid JSON only with no extra text.'
+          },
+          {
+            role: 'user',
+            content: `Analyse this news headline or claim and determine if it is likely TRUE, FALSE, MISLEADING or UNVERIFIABLE.
 
 Headline: "${headline}"
 
-Respond in this exact JSON format only, no other text:
+Respond in this exact JSON format only:
 {
   "verdict": "TRUE" or "FALSE" or "MISLEADING" or "UNVERIFIABLE",
-  "credibility_score": (number from 0 to 100),
-  "misinformation_score": (number from 0 to 100),
+  "credibility_score": (number 0-100),
+  "misinformation_score": (number 0-100),
   "summary": "(2-3 sentences explaining your verdict)",
   "sources_note": "(brief note about what sources would verify this)",
-  "warning": "(any specific warning if this looks like dangerous misinformation, otherwise empty string)"
+  "warning": "(specific warning if dangerous misinformation, otherwise empty string)"
 }`
-        }]
+          }
+        ]
       })
     });
 
     const data = await response.json();
-    console.log('Claude response:', JSON.stringify(data));
+    console.log('Groq response status:', response.status);
 
-    if (data.content && data.content[0] && data.content[0].text) {
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      const text = data.choices[0].message.content;
+      console.log('Groq text:', text);
       try {
-        const result = JSON.parse(data.content[0].text);
+        // Clean JSON from any markdown
+        const clean = text.replace(/```json|```/g, '').trim();
+        const result = JSON.parse(clean);
         res.json(result);
       } catch (parseErr) {
+        console.log('Parse error:', parseErr.message);
         res.json({ 
           verdict: 'UNVERIFIABLE',
           credibility_score: 50,
           misinformation_score: 50,
-          summary: data.content[0].text,
+          summary: text.substring(0, 200),
           sources_note: 'Please verify with credible news sources',
           warning: ''
         });
       }
     } else {
-      res.status(500).json({ error: 'Claude did not return a valid response' });
+      console.log('Groq error:', JSON.stringify(data));
+      res.status(500).json({ error: 'AI did not return a valid response' });
     }
   } catch (err) {
     console.error('News verify error:', err.message);
@@ -180,6 +190,6 @@ Respond in this exact JSON format only, no other text:
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RehoCheck API v2.0 on port ${PORT}`);
-  console.log(`Google: ${GOOGLE_KEY ? 'OK' : 'MISSING'} | VT: ${VT_KEY ? 'OK' : 'MISSING'} | Claude: ${CLAUDE_KEY ? 'OK' : 'MISSING'}`);
+  console.log(`RehoCheck API v2.1 on port ${PORT}`);
+  console.log(`Google: ${GOOGLE_KEY ? 'OK' : 'MISSING'} | VT: ${VT_KEY ? 'OK' : 'MISSING'} | Groq: ${GROQ_KEY ? 'OK' : 'MISSING'}`);
 });
